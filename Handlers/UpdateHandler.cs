@@ -15,18 +15,21 @@ namespace TelegramGigaChatBot.Handlers;
 
 public class UpdateHandler : IUpdateHandler
 {
-    private static readonly Dictionary<int, AnalyzedEmail> AnalyzedEmailsCache = new();
+    // Note: In-memory state storage. Would need a persistent store for production.
+    private static readonly Dictionary<long, string> UserEmailReplyState = new();
     private readonly YandexSttService _yandexSttService;
     private readonly MailReaderService _mailReaderService;
     private readonly MailAnalyzerService _mailAnalyzerService;
     private readonly MailReplyService _mailReplyService;
+    private readonly EmailCacheService _emailCacheService;
 
-    public UpdateHandler(YandexSttService yandexSttService, MailReaderService mailReaderService, MailAnalyzerService mailAnalyzerService, MailReplyService mailReplyService)
+    public UpdateHandler(YandexSttService yandexSttService, MailReaderService mailReaderService, MailAnalyzerService mailAnalyzerService, MailReplyService mailReplyService, EmailCacheService emailCacheService)
     {
         _yandexSttService = yandexSttService;
         _mailReaderService = mailReaderService;
         _mailAnalyzerService = mailAnalyzerService;
         _mailReplyService = mailReplyService;
+        _emailCacheService = emailCacheService;
     }
 
     private const string DecisionCallback = "decision";
@@ -43,9 +46,14 @@ public class UpdateHandler : IUpdateHandler
     private const string ClearContextCallback = "clear_context";
     private const string ConfirmClearContextCallback = "confirm_clear_context";
     private const string CancelClearCallback = "cancel_clear_context";
-    private const string CheckEmailCallback = "check_email";
     private const string GenerateReplyCallback = "generate_reply";
+    private const string VoiceReplyCallback = "voice_reply";
+    private const string ManualReplyCallback = "manual_reply";
+    private const string ViewAnalysisCallback = "view_analysis";
+    private const string SendEmailCallback = "send_email";
+    private const string EditReplyCallback = "edit_reply";
     private const string IgnoreEmailCallback = "ignore_email";
+    private const string CheckEmailCallback = "check_email";
     
     public Task HandleUpdateAsync(ITelegramBotClient botClient, Update update, CancellationToken cancellationToken)
     {
@@ -73,9 +81,18 @@ public class UpdateHandler : IUpdateHandler
             return;
         
         var chatId = message.Chat.Id;
-        var userId = message.From.Id.ToString();
-        
-        Console.WriteLine($"Received a '{messageText}' message in chat {chatId} from user {userId}.");
+        var userId = message.From.Id;
+
+        if (UserEmailReplyState.TryGetValue(userId, out var messageId))
+        {
+            // Handle manual email reply
+            await ProcessManualEmailReply(botClient, message, chatId, messageId, cancellationToken);
+            UserEmailReplyState.Remove(userId); // Reset state
+            return;
+        }
+
+        var userIdString = userId.ToString();
+        LoggingService.Logger?.LogInformation("Received a '{MessageText}' message in chat {ChatId} from user {UserIdString}.", messageText, chatId, userIdString);
 
         if (messageText.StartsWith("/start"))
         {
@@ -113,28 +130,90 @@ public class UpdateHandler : IUpdateHandler
 
         if (callbackData.StartsWith(GenerateReplyCallback))
         {
-            var emailHash = int.Parse(callbackData.Split('_')[1]);
-            if (AnalyzedEmailsCache.TryGetValue(emailHash, out var email))
+            var parts = callbackData.Split('_');
+            var messageId = parts[1];
+
+            var email = _emailCacheService.Get(messageId);
+            if (email != null)
             {
-                var mode = MemoryService.GetMode(userId);
-                await botClient.SendMessage(chatId: chatId, text: "✍️ Генерирую черновик ответа...", cancellationToken: cancellationToken);
-                var draft = await _mailReplyService.GenerateReplyDraftAsync(email, mode, cancellationToken);
-                
-                // TODO: Add keyboard for sending/editing draft
-                await botClient.SendMessage(chatId: chatId, text: $"Черновик:\n\n{draft}", cancellationToken: cancellationToken);
-                AnalyzedEmailsCache.Remove(emailHash); // Clean up
+                if (parts.Length == 2) // Initial request, show style keyboard
+                {
+                    var styleKeyboard = GetReplyStyleKeyboard(messageId);
+                    await botClient.SendMessage(chatId: chatId, text: "Выберите стиль ответа:", replyMarkup: styleKeyboard, cancellationToken: cancellationToken);
+                }
+                else // Style selected, generate draft
+                {
+                    var styleString = parts[2];
+                    if (Enum.TryParse<ReplyStyle>(styleString, true, out var style))
+                    {
+                        await botClient.SendMessage(chatId: chatId, text: "✍️ Генерирую черновик ответа...", cancellationToken: cancellationToken);
+                        var draft = await _mailReplyService.GenerateReplyDraftAsync(email, style, cancellationToken);
+
+                        _emailCacheService.AddDraft(messageId, draft);
+                        await botClient.SendMessage(chatId: chatId, text: $"Черновик:\n\n{draft}", replyMarkup: GetSendConfirmationKeyboard(messageId), cancellationToken: cancellationToken);
+                    }
+                }
+            }
+            return;
+        }
+
+        if (callbackData.StartsWith(VoiceReplyCallback))
+        {
+            var messageId = callbackData.Split('_')[1];
+            var email = _emailCacheService.Get(messageId);
+            if (email != null)
+            {
+                UserEmailReplyState[callbackQuery.From.Id] = messageId;
+                await botClient.SendMessage(chatId: chatId, text: "🎙️ Пожалуйста, запишите ваш ответ.", cancellationToken: cancellationToken);
+            }
+            return;
+        }
+
+        if (callbackData.StartsWith(ManualReplyCallback))
+        {
+            var messageId = callbackData.Split('_')[1];
+            var email = _emailCacheService.Get(messageId);
+            if (email != null)
+            {
+                UserEmailReplyState[callbackQuery.From.Id] = messageId;
+                await botClient.SendMessage(chatId: chatId, text: "📝 Введите ваш ответ:", cancellationToken: cancellationToken);
+            }
+            return;
+        }
+
+        if (callbackData.StartsWith(ViewAnalysisCallback))
+        {
+            var messageId = callbackData.Split('_')[1];
+            var email = _emailCacheService.Get(messageId);
+            if (email != null)
+            {
+                var analysisText = $@"
+*Полный анализ письма:*
+*От:* {email.OriginalMessage.From}
+*Тема:* {email.OriginalMessage.Subject}
+*Приоритет:* {email.Priority}
+*Намерение:* {email.Intent}
+*Эмоциональный тон:* {email.EmotionalTone}
+*Ключевые данные:*
+- Вопросы: {string.Join(", ", email.KeyData.GetValueOrDefault("questions", new List<string>()))}
+- Требования: {string.Join(", ", email.KeyData.GetValueOrDefault("requirements", new List<string>()))}
+- Дедлайны: {string.Join(", ", email.KeyData.GetValueOrDefault("deadlines", new List<string>()))}
+- Деньги: {string.Join(", ", email.KeyData.GetValueOrDefault("money_mentions", new List<string>()))}
+- Договоры: {string.Join(", ", email.KeyData.GetValueOrDefault("contract_mentions", new List<string>()))}
+- Проблемы: {string.Join(", ", email.KeyData.GetValueOrDefault("problem_mentions", new List<string>()))}
+*Резюме:* {email.Summary}
+*Требуется действие:* {email.ActionRequired}
+*Риск:* {email.Risk}";
+                await botClient.SendMessage(chatId: chatId, text: analysisText, cancellationToken: cancellationToken);
             }
             return;
         }
 
         if (callbackData.StartsWith(IgnoreEmailCallback))
         {
-            var emailHash = int.Parse(callbackData.Split('_')[1]);
-            if (AnalyzedEmailsCache.ContainsKey(emailHash))
-            {
-                await botClient.SendMessage(chatId: chatId, text: "🗑 Письмо проигнорировано.", cancellationToken: cancellationToken);
-                AnalyzedEmailsCache.Remove(emailHash); // Clean up
-            }
+            var messageId = callbackData.Split('_')[1];
+            _emailCacheService.Remove(messageId);
+            await botClient.SendMessage(chatId: chatId, text: "🗑 Письмо проигнорировано.", cancellationToken: cancellationToken);
             return;
         }
         
@@ -196,6 +275,20 @@ public class UpdateHandler : IUpdateHandler
             }
             case CancelCallback:
                 await botClient.SendMessage(chatId: chatId, text: "Действие отменено.", cancellationToken: cancellationToken);
+                break;
+            case CheckEmailCallback:
+                await botClient.SendMessage(chatId: chatId, text: "⏳ Проверяю почту...", cancellationToken: cancellationToken);
+                var unreadEmails = await _mailReaderService.GetUnreadEmailsAsync(cancellationToken);
+                if (unreadEmails.Any())
+                {
+                    await botClient.SendMessage(chatId: chatId, text: $"📥 Найдено новых писем: {unreadEmails.Count}. Начинаю анализ...", cancellationToken: cancellationToken);
+                    // This will trigger the background service to pick them up on its next run,
+                    // so no need to process them here.
+                }
+                else
+                {
+                    await botClient.SendMessage(chatId: chatId, text: "👍 Новых писем нет.", cancellationToken: cancellationToken);
+                }
                 break;
             case DeepAnalysisCallback:
             case DeepAnalysisRepeatCallback:
@@ -259,48 +352,35 @@ public class UpdateHandler : IUpdateHandler
                     cancellationToken: cancellationToken);
                 break;
             }
-            
-            case CheckEmailCallback:
-            {
-                await botClient.SendMessage(chatId: chatId, text: "⏳ Проверяю почту...", cancellationToken: cancellationToken);
-                var unreadEmails = await _mailReaderService.GetUnreadEmailsAsync(cancellationToken);
-
-                if (!unreadEmails.Any())
+            default:
+                if (callbackData.StartsWith(SendEmailCallback))
                 {
-                    await botClient.SendMessage(chatId: chatId, text: "👍 Новых писем нет.", cancellationToken: cancellationToken);
-                    return;
-                }
+                    var messageId = callbackData.Split('_')[1];
+                    var draft = _emailCacheService.GetDraft(messageId);
+                    var email = _emailCacheService.Get(messageId);
 
-                await botClient.SendMessage(chatId: chatId, text: $"📥 Найдено новых писем: {unreadEmails.Count}. Начинаю анализ...", cancellationToken: cancellationToken);
-
-                foreach (var email in unreadEmails)
-                {
-                    var analyzedEmail = await _mailAnalyzerService.AnalyzeEmailAsync(email, cancellationToken);
-                    var emailHash = analyzedEmail.GetHashCode();
-                    AnalyzedEmailsCache[emailHash] = analyzedEmail;
-                    
-                    var messageText = $@"
-📬 *Новое письмо*
-*От:* {analyzedEmail.OriginalMessage.From}
-*Тема:* {analyzedEmail.OriginalMessage.Subject}
-*Важность:* {analyzedEmail.Importance}
-
-*Кратко:*
-{analyzedEmail.Summary}
-
-*Рекомендация:*
-{analyzedEmail.ActionRequired}";
-                    
-                    var emailKeyboard = new InlineKeyboardMarkup(new[]
+                    if (draft != null && email != null)
                     {
-                        new [] { InlineKeyboardButton.WithCallbackData("✍️ Сформировать ответ", $"{GenerateReplyCallback}_{email.GetHashCode()}") },
-                        new [] { InlineKeyboardButton.WithCallbackData("🗑 Игнорировать", $"{IgnoreEmailCallback}_{email.GetHashCode()}") },
-                    });
-                    
-                    await botClient.SendMessage(chatId: chatId, text: messageText, replyMarkup: emailKeyboard, cancellationToken: cancellationToken);
+                        var success = await _mailReplyService.SendReplyAsync(email.OriginalMessage.Account, email.OriginalMessage.From, $"Re: {email.OriginalMessage.Subject}", draft, cancellationToken);
+                        if (success)
+                        {
+                            await botClient.SendMessage(chatId: chatId, text: "✅ Письмо успешно отправлено.", cancellationToken: cancellationToken);
+                        }
+                        else
+                        {
+                            await botClient.SendMessage(chatId: chatId, text: "❌ Не удалось отправить письмо.", cancellationToken: cancellationToken);
+                        }
+                        _emailCacheService.Remove(messageId);
+                        _emailCacheService.RemoveDraft(messageId);
+                    }
+                }
+                else if (callbackData.StartsWith(EditReplyCallback))
+                {
+                    var messageId = callbackData.Split('_')[1];
+                    UserEmailReplyState[callbackQuery.From.Id] = messageId;
+                    await botClient.SendMessage(chatId: chatId, text: "✏️ Пожалуйста, отправьте отредактированный вариант ответа.", cancellationToken: cancellationToken);
                 }
                 break;
-            }
         }
     }
 
@@ -357,33 +437,49 @@ public class UpdateHandler : IUpdateHandler
             _ => exception.ToString()
         };
 
-        Console.WriteLine(ErrorMessage);
+        LoggingService.Logger?.LogError(ErrorMessage);
         return Task.CompletedTask;
     }
 
     private async Task HandleVoiceMessageAsync(ITelegramBotClient botClient, Message message, CancellationToken cancellationToken)
     {
         var chatId = message.Chat.Id;
-        var userId = message.From!.Id.ToString();
+        var userId = message.From!.Id;
 
-        await botClient.SendChatAction(chatId: chatId, action: ChatAction.Typing, cancellationToken: cancellationToken);
-        
-        var fileId = message.Voice!.FileId;
-        var fileInfo = await botClient.GetFile(fileId: fileId, cancellationToken: cancellationToken);
-        var filePath = fileInfo.FilePath;
-
-        if (filePath is null)
+        if (UserEmailReplyState.TryGetValue(userId, out var messageId))
         {
-            await botClient.SendMessage(chatId: chatId, text: "Не удалось получить информацию о файле.", cancellationToken: cancellationToken);
+            // Handle voice reply for email
+            await ProcessVoiceEmailReply(botClient, message, chatId, messageId, cancellationToken);
+            UserEmailReplyState.Remove(userId); // Reset state
+        }
+        else
+        {
+            // Handle general voice message
+            await ProcessGeneralVoiceMessage(botClient, message, chatId, userId.ToString(), cancellationToken);
+        }
+    }
+
+    private async Task ProcessVoiceEmailReply(ITelegramBotClient botClient, Message message, long chatId, string messageId, CancellationToken cancellationToken)
+    {
+        var email = _emailCacheService.Get(messageId);
+        if (email == null) return;
+
+        var (success, text) = await TranscribeVoiceMessage(botClient, message, cancellationToken);
+        if (!success)
+        {
+            await botClient.SendMessage(chatId: chatId, text: text, cancellationToken: cancellationToken);
             return;
         }
 
-        await using var audioStream = new MemoryStream();
-        await botClient.DownloadFile(filePath: filePath, destination: audioStream, cancellationToken: cancellationToken);
-        audioStream.Position = 0;
+        await botClient.SendMessage(chatId: chatId, text: $"🎙 Распознанный текст:\n«{text}»", cancellationToken: cancellationToken);
 
-        var (success, text) = await _yandexSttService.RecognizeSpeechAsync(audioStream, cancellationToken);
+        _emailCacheService.AddDraft(messageId, text);
+        await botClient.SendMessage(chatId: chatId, text: "Отправляем этот текст?", replyMarkup: GetSendConfirmationKeyboard(messageId), cancellationToken: cancellationToken);
+    }
 
+    private async Task ProcessGeneralVoiceMessage(ITelegramBotClient botClient, Message message, long chatId, string userIdString, CancellationToken cancellationToken)
+    {
+        var (success, text) = await TranscribeVoiceMessage(botClient, message, cancellationToken);
         if (!success)
         {
             await botClient.SendMessage(chatId: chatId, text: text, cancellationToken: cancellationToken);
@@ -392,19 +488,37 @@ public class UpdateHandler : IUpdateHandler
 
         await botClient.SendMessage(chatId: chatId, text: $"🎙 Я понял так:\n«{text}»", cancellationToken: cancellationToken);
 
-        MemoryService.AddMessage(userId, text);
+        MemoryService.AddMessage(userIdString, text);
         
         await botClient.SendChatAction(chatId: chatId, action: ChatAction.Typing, cancellationToken: cancellationToken);
 
-        var history = MemoryService.GetHistory(userId);
-        var mode = MemoryService.GetMode(userId);
+        var history = MemoryService.GetHistory(userIdString);
+        var mode = MemoryService.GetMode(userIdString);
         var response = await GigaChatService.GetDecisionAsync(text, history, mode, cancellationToken);
 
-        MemoryService.SetLastSituation(userId, text);
-        MemoryService.SetLastGigaChatResponse(userId, response);
+        MemoryService.SetLastSituation(userIdString, text);
+        MemoryService.SetLastGigaChatResponse(userIdString, response);
 
         await botClient.SendMessage(chatId: chatId, text: response, cancellationToken: cancellationToken);
         await botClient.SendMessage(chatId: chatId, text: "Что дальше?", replyMarkup: GetFollowUpKeyboard(), cancellationToken: cancellationToken);
+    }
+
+    private async Task<(bool, string)> TranscribeVoiceMessage(ITelegramBotClient botClient, Message message, CancellationToken cancellationToken)
+    {
+        var fileId = message.Voice!.FileId;
+        var fileInfo = await botClient.GetFile(fileId: fileId, cancellationToken: cancellationToken);
+        var filePath = fileInfo.FilePath;
+
+        if (filePath is null)
+        {
+            return (false, "Не удалось получить информацию о файле.");
+        }
+
+        await using var audioStream = new MemoryStream();
+        await botClient.DownloadFile(filePath: filePath, destination: audioStream, cancellationToken: cancellationToken);
+        audioStream.Position = 0;
+
+        return await _yandexSttService.RecognizeSpeechAsync(audioStream, cancellationToken);
     }
     
     private InlineKeyboardMarkup GetInitialDecisionKeyboard()
@@ -413,6 +527,53 @@ public class UpdateHandler : IUpdateHandler
         {
             new [] { InlineKeyboardButton.WithCallbackData("🧠 Получить решение", DecisionCallback) },
             new [] { InlineKeyboardButton.WithCallbackData("❌ Ничего", CancelCallback) },
+        });
+    }
+
+    private InlineKeyboardMarkup GetReplyStyleKeyboard(string messageId)
+    {
+        return new(new[]
+        {
+            new[]
+            {
+                InlineKeyboardButton.WithCallbackData("Формальный", $"{GenerateReplyCallback}_{messageId}_{ReplyStyle.Formal}"),
+                InlineKeyboardButton.WithCallbackData("Деловой", $"{GenerateReplyCallback}_{messageId}_{ReplyStyle.Business}"),
+            },
+            new[]
+            {
+                InlineKeyboardButton.WithCallbackData("Нейтральный", $"{GenerateReplyCallback}_{messageId}_{ReplyStyle.Neutral}"),
+                InlineKeyboardButton.WithCallbackData("Дружелюбный", $"{GenerateReplyCallback}_{messageId}_{ReplyStyle.Friendly}"),
+            },
+            new[]
+            {
+                InlineKeyboardButton.WithCallbackData("Краткий", $"{GenerateReplyCallback}_{messageId}_{ReplyStyle.Concise}"),
+            },
+        });
+    }
+
+    private async Task ProcessManualEmailReply(ITelegramBotClient botClient, Message message, long chatId, string messageId, CancellationToken cancellationToken)
+    {
+        var email = _emailCacheService.Get(messageId);
+        if (email == null) return;
+
+        var replyText = message.Text;
+        _emailCacheService.AddDraft(messageId, replyText);
+        await botClient.SendMessage(chatId: chatId, text: $"Черновик:\n\n{replyText}", replyMarkup: GetSendConfirmationKeyboard(messageId), cancellationToken: cancellationToken);
+    }
+
+    private InlineKeyboardMarkup GetSendConfirmationKeyboard(string messageId)
+    {
+        return new(new[]
+        {
+            new[]
+            {
+                InlineKeyboardButton.WithCallbackData("✅ Отправить", $"{SendEmailCallback}_{messageId}"),
+                InlineKeyboardButton.WithCallbackData("✏️ Редактировать", $"{EditReplyCallback}_{messageId}"),
+            },
+            new[]
+            {
+                InlineKeyboardButton.WithCallbackData("❌ Отмена", CancelCallback),
+            },
         });
     }
 }

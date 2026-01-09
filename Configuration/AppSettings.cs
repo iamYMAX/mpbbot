@@ -6,4 +6,5 @@ public class AppSettings
     public GigaChatSettings GigaChat { get; set; } = new();
     public YandexSettings YandexSpeechKit { get; set; } = new();
     public EmailSettings EmailSettings { get; set; } = new();
+    public BackgroundServiceSettings BackgroundService { get; set; } = new();
 }

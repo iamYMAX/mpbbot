@@ -1,7 +1,8 @@
 using System;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Text.Json;
 using TelegramGigaChatBot.Models;
 
 namespace TelegramGigaChatBot.Services
@@ -13,11 +14,19 @@ namespace TelegramGigaChatBot.Services
             var prompt = $@"
 Ты — ИИ-аналитик электронной почты. Проанализируй следующее письмо и верни ТОЛЬКО JSON-объект со следующей структурой:
 {{
-  ""importance"": ""🔴 Критично | 🟠 Важно | 🟢 Информационно"",
-  ""type"": ""Запрос | Жалоба | Задача | Финансы | Юридическое | Спам / мусор"",
+  ""priority"": ""Одно из: Critical, High, Medium, Low"",
+  ""intent"": ""Одно из: Запрос, Жалоба, Предложение, Срочное, Информационное, Другое"",
+  ""emotional_tone"": ""Одно из: Нейтральный, Напряженный, Агрессивный, Позитивный, Другое"",
+  ""key_data"": {{
+    ""questions"": [""список"", ""вопросов"", ""из письма""],
+    ""requirements"": [""список"", ""требований""],
+    ""deadlines"": [""список"", ""дедлайнов""],
+    ""money_mentions"": [""список"", ""упоминаний денег""],
+    ""contract_mentions"": [""список"", ""упоминаний договоров""],
+    ""problem_mentions"": [""список"", ""упоминаний проблем""]
+  }},
   ""summary"": ""Краткое резюме письма в 3-5 предложениях"",
   ""action_required"": ""Что конкретно требуется от получателя"",
-  ""deadline"": ""Срок выполнения, если указан, в формате YYYY-MM-DD HH:mm"",
   ""risk"": ""Потенциальные риски при игнорировании письма""
 }}
 
@@ -31,27 +40,34 @@ namespace TelegramGigaChatBot.Services
             
             try
             {
-                var analyzedEmail = JsonSerializer.Deserialize<AnalyzedEmail>(rawResponse, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                var options = new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true,
+                    Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
+                };
+                var analyzedEmail = JsonSerializer.Deserialize<AnalyzedEmail>(rawResponse, options);
+
                 if (analyzedEmail != null)
                 {
                     analyzedEmail.OriginalMessage = email;
                     return analyzedEmail;
                 }
             }
+            catch (JsonException ex)
+            {
+                LoggingService.Logger?.LogError(ex, "Failed to deserialize GigaChat response. Raw response: {RawResponse}", rawResponse);
+            }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to deserialize GigaChat response for email analysis: {ex.Message}");
+                LoggingService.Logger?.LogError(ex, "An unexpected error occurred during email analysis.");
             }
             
             return new AnalyzedEmail
             {
-                Importance = "Не удалось определить",
-                Type = "Не удалось определить",
                 Summary = "Не удалось проанализировать письмо.",
-                ActionRequired = "Не удалось определить",
-                Deadline = "Не удалось определить",
-                Risk = "Не удалось определить",
-                OriginalMessage = email
+                ActionRequired = "Не удалось определить.",
+                OriginalMessage = email,
+                Priority = EmailPriority.Medium // Default priority
             };
         }
     }

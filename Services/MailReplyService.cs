@@ -17,9 +17,9 @@ namespace TelegramGigaChatBot.Services
             _emailSettings = emailSettings;
         }
 
-        public async Task<string> GenerateReplyDraftAsync(AnalyzedEmail email, ThinkingMode mode, CancellationToken cancellationToken)
+        public async Task<string> GenerateReplyDraftAsync(AnalyzedEmail email, ReplyStyle style, CancellationToken cancellationToken)
         {
-            var stylePrompt = ThinkingModeHelper.GetStylePrompt(mode);
+            var stylePrompt = ReplyStyleHelper.GetStylePrompt(style);
             var prompt = $@"
 Ты — ИИ-ассистент, который помогает писать ответы на электронные письма.
 Стиль ответа: {stylePrompt}.
@@ -59,12 +59,13 @@ namespace TelegramGigaChatBot.Services
                 
                 await client.SendAsync(message, cancellationToken);
                 await client.DisconnectAsync(true, cancellationToken);
-                
+
+                LoggingService.Logger?.LogInformation($"Email sent from {account.EmailAddress} to {to}.");
                 return true;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to send email from {account.EmailAddress}: {ex.Message}");
+                LoggingService.Logger?.LogError(ex, $"Failed to send email from {account.EmailAddress}.");
                 return false;
             }
         }
