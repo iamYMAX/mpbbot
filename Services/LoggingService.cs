@@ -8,7 +8,7 @@ namespace TelegramGigaChatBot.Services
 
         public static void Initialize()
         {
-            using var loggerFactory = LoggerFactory.Create(builder =>
+            var loggerFactory = LoggerFactory.Create(builder =>
             {
                 builder
                     .AddFilter("Microsoft", LogLevel.Warning)
