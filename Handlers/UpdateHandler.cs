@@ -558,6 +558,11 @@ public class UpdateHandler : IUpdateHandler
         if (email == null) return;
 
         var replyText = message.Text;
+        if (string.IsNullOrEmpty(replyText))
+        {
+            await botClient.SendMessage(chatId: chatId, text: "Пустой ответ не может быть отправлен.", cancellationToken: cancellationToken);
+            return;
+        }
         _emailCacheService.AddDraft(messageId, replyText);
         await botClient.SendMessage(chatId: chatId, text: $"Черновик:\n\n{replyText}", replyMarkup: GetSendConfirmationKeyboard(messageId), cancellationToken: cancellationToken);
     }

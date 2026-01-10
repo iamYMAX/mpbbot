@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MailKit.Net.Smtp;
 using MimeKit;
+using Microsoft.Extensions.Logging;
 using TelegramGigaChatBot.Configuration;
 using TelegramGigaChatBot.Models;
 
