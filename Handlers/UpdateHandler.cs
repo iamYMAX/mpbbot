@@ -10,6 +10,7 @@ using Telegram.Bot.Types.ReplyMarkups;
 using TelegramGigaChatBot.Models;
 using TelegramGigaChatBot.Services;
 using System.IO;
+using Microsoft.Extensions.Logging;
 
 namespace TelegramGigaChatBot.Handlers;
 
@@ -105,7 +106,7 @@ public class UpdateHandler : IUpdateHandler
             return;
         }
 
-        MemoryService.AddMessage(userId, messageText);
+        MemoryService.AddMessage(userId.ToString(), messageText);
 
         await botClient.SendMessage(
             chatId: chatId,

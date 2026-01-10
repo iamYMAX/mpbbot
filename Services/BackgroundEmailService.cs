@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Telegram.Bot;
 using Telegram.Bot.Types.ReplyMarkups;
 using TelegramGigaChatBot.Models;
+using Microsoft.Extensions.Logging;
 
 namespace TelegramGigaChatBot.Services
 {
