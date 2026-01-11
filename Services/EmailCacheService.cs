@@ -9,7 +9,7 @@ namespace TelegramGigaChatBot.Services;
 public class EmailCacheService
 {
     private readonly string _cacheFilePath = "email_cache.json";
-    private readonly Dictionary<string, EmailAnalysisResult> _emailCache = new();
+    private Dictionary<string, EmailAnalysisResult> _emailCache = new();
 
     public EmailCacheService()
     {
