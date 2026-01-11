@@ -25,15 +25,18 @@ public class GigaChatService
     {
         _settings = settings.GigaChat;
         _logger = logger;
+        _logger.LogInformation("GigaChatService created. ClientId: {ClientId}", _settings.ClientId);
     }
 
     private async Task<string> GetAuthTokenAsync(CancellationToken cancellationToken)
     {
         if (_cachedToken != null && DateTime.UtcNow < _tokenExpiry)
         {
+            _logger.LogInformation("Using cached GigaChat token.");
             return _cachedToken;
         }
         
+        _logger.LogInformation("Cached GigaChat token is null or expired. Requesting a new one.");
         var request = new HttpRequestMessage(HttpMethod.Post, "https://ngw.devices.sberbank.ru:9443/api/v2/oauth");
 
         var credentials = $"{_settings.ClientId}:{_settings.ClientSecret}";
@@ -46,6 +49,8 @@ public class GigaChatService
             new KeyValuePair<string, string>("scope", _settings.Scope)
         });
 
+        _logger.LogInformation("Sending GigaChat auth request to {Uri}", request.RequestUri);
+
         try
         {
             var response = await _httpClient.SendAsync(request, cancellationToken);
@@ -57,9 +62,13 @@ public class GigaChatService
                 return null;
             }
 
+            _logger.LogInformation("GigaChat auth response: {ResponseBody}", responseBody);
+
             var authResponse = JsonSerializer.Deserialize<GigaAuthResponse>(responseBody);
             _cachedToken = authResponse?.AccessToken;
             _tokenExpiry = DateTime.UnixEpoch.AddMilliseconds(authResponse?.ExpiresAt ?? 0).AddSeconds(-60);
+
+            _logger.LogInformation("GigaChat token received successfully. Expires at: {TokenExpiry}", _tokenExpiry);
 
             return _cachedToken;
         }
