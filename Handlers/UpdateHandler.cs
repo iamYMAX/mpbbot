@@ -9,6 +9,7 @@ using Telegram.Bot.Polling;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
+using TelegramGigaChatBot.Configuration;
 using TelegramGigaChatBot.Models;
 using TelegramGigaChatBot.Services;
 using System.IO;
@@ -140,11 +141,6 @@ public class UpdateHandler : IUpdateHandler
                 _userActionStateService.SetState(message.From.Id, UserAction.WaitingForSmtpPort);
                 await botClient.SendMessage(chatId: chatId, text: "Введите SMTP порт:", cancellationToken: cancellationToken);
                 return;
-            case UserAction.WaitingForSmtpHost:
-                _userEmailRegistrationState[message.From.Id].SmtpHost = messageText;
-                _userActionStateService.SetState(message.From.Id, UserAction.WaitingForSmtpPort);
-                await botClient.SendMessage(chatId: chatId, text: "Введите SMTP порт:", cancellationToken: cancellationToken);
-                return;
             case UserAction.WaitingForSmtpPort:
                 if (int.TryParse(messageText, out var smtpPort))
                 {
@@ -163,19 +159,6 @@ public class UpdateHandler : IUpdateHandler
                 {
                     await botClient.SendMessage(chatId: chatId, text: "Неверный порт. Попробуйте еще раз.", cancellationToken: cancellationToken);
                 }
-                return;
-        }
-
-        if (userState.CurrentAction == UserAction.EditingEmailReply)
-        {
-            var messageId = userState.Data;
-                account.ImapUseSsl = true;
-                account.SmtpUseSsl = true;
-                account.Login = account.EmailAddress;
-                _userEmailAccountService.AddAccount(message.From.Id, account);
-                _userEmailRegistrationState.TryRemove(message.From.Id, out _);
-                _userActionStateService.ClearState(message.From.Id);
-                await botClient.SendMessage(chatId: chatId, text: "Email аккаунт успешно добавлен.", cancellationToken: cancellationToken);
                 return;
         }
 

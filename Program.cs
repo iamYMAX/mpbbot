@@ -70,7 +70,8 @@ public static class Program
                         provider.GetRequiredService<EmailCacheService>(),
                         provider.GetRequiredService<ILogger<UpdateHandler>>(),
                         provider.GetRequiredService<UserActionStateService>(),
-                        provider.GetRequiredService<GigaChatService>()));
+                        provider.GetRequiredService<GigaChatService>(),
+                        provider.GetRequiredService<UserEmailAccountService>()));
 
                 services.AddSingleton<UserActionStateService>();
                 services.AddSingleton<UserEmailAccountService>();
