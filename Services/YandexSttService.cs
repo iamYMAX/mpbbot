@@ -22,9 +22,9 @@ namespace TelegramGigaChatBot.Services
         private static DateTime _tokenExpiry;
         private static readonly SemaphoreSlim _tokenSemaphore = new SemaphoreSlim(1, 1);
 
-        public YandexSttService(YandexSettings settings)
+        public YandexSttService(AppSettings settings)
         {
-            _settings = settings ?? throw new ArgumentNullException(nameof(settings));
+            _settings = settings.YandexSpeechKit ?? throw new ArgumentNullException(nameof(settings.YandexSpeechKit));
             if (string.IsNullOrEmpty(_settings.FolderId) || string.IsNullOrEmpty(_settings.ServiceAccountKeyPath) || string.IsNullOrEmpty(_settings.IamTokenUrl) || string.IsNullOrEmpty(_settings.SttUrl))
             {
                 throw new InvalidOperationException("One or more YandexSpeechKit settings are not configured.");

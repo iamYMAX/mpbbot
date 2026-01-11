@@ -8,17 +8,21 @@ namespace TelegramGigaChatBot.Services
 {
     public class MailAnalyzerService
     {
-        public async Task<AnalyzedEmail> AnalyzeEmailAsync(EmailMessage email, CancellationToken cancellationToken)
+        public async Task<EmailAnalysisResult> AnalyzeEmailAsync(EmailMessage email, CancellationToken cancellationToken)
         {
             var prompt = $@"
 Ты — ИИ-аналитик электронной почты. Проанализируй следующее письмо и верни ТОЛЬКО JSON-объект со следующей структурой:
 {{
-  ""importance"": ""🔴 Критично | 🟠 Важно | 🟢 Информационно"",
-  ""type"": ""Запрос | Жалоба | Задача | Финансы | Юридическое | Спам / мусор"",
-  ""summary"": ""Краткое резюме письма в 3-5 предложениях"",
-  ""action_required"": ""Что конкретно требуется от получателя"",
-  ""deadline"": ""Срок выполнения, если указан, в формате YYYY-MM-DD HH:mm"",
-  ""risk"": ""Потенциальные риски при игнорировании письма""
+  ""sender_type"": ""Определи роль отправителя (клиент, коллега, руководитель, подрядчик, внешний запрос, система/автомат)"",
+  ""theme"": ""Определи основную тему письма (Продажи, Техподдержка, Проект, HR, Финансы, Личное)"",
+  ""intent"": ""Определи намерение (Запрос информации, Постановка задачи, Жалоба, Предложение, Уведомление)"",
+  ""emotional_tone"": ""Определи эмоциональный тон (Нейтральный, Позитивный, Негативный, Напряженный, Агрессивный)"",
+  ""has_questions"": true/false,
+  ""has_deadlines"": true/false,
+  ""has_money_mention"": true/false,
+  ""has_legal_mention"": true/false,
+  ""summary"": ""Сформулируй краткое резюме письма в 2-3 предложениях"",
+  ""priority"": ""Присвой приоритет (Critical, High, Medium, Low) на основе содержания, тона и наличия дедлайнов/финансов/юридических вопросов""
 }}
 
 ТЕКСТ ПИСЬМА:
@@ -28,14 +32,14 @@ namespace TelegramGigaChatBot.Services
 ";
 
             var rawResponse = await GigaChatService.GetRawGigaChatResponse(prompt, cancellationToken);
-            
+
             try
             {
-                var analyzedEmail = JsonSerializer.Deserialize<AnalyzedEmail>(rawResponse, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                if (analyzedEmail != null)
+                var analysisResult = JsonSerializer.Deserialize<EmailAnalysisResult>(rawResponse, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (analysisResult != null)
                 {
-                    analyzedEmail.OriginalMessage = email;
-                    return analyzedEmail;
+                    analysisResult.OriginalMessage = email;
+                    return analysisResult;
                 }
             }
             catch (Exception ex)
@@ -43,14 +47,10 @@ namespace TelegramGigaChatBot.Services
                 Console.WriteLine($"Failed to deserialize GigaChat response for email analysis: {ex.Message}");
             }
             
-            return new AnalyzedEmail
+            return new EmailAnalysisResult
             {
-                Importance = "Не удалось определить",
-                Type = "Не удалось определить",
                 Summary = "Не удалось проанализировать письмо.",
-                ActionRequired = "Не удалось определить",
-                Deadline = "Не удалось определить",
-                Risk = "Не удалось определить",
+                Priority = "Medium",
                 OriginalMessage = email
             };
         }

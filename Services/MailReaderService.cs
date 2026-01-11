@@ -6,6 +6,7 @@ using MailKit;
 using MailKit.Net.Imap;
 using MailKit.Search;
 using MimeKit;
+using Microsoft.Extensions.Logging;
 using TelegramGigaChatBot.Configuration;
 using TelegramGigaChatBot.Models;
 
@@ -14,10 +15,12 @@ namespace TelegramGigaChatBot.Services
     public class MailReaderService
     {
         private readonly EmailSettings _emailSettings;
+        private readonly ILogger<MailReaderService> _logger;
 
-        public MailReaderService(EmailSettings emailSettings)
+        public MailReaderService(AppSettings settings, ILogger<MailReaderService> logger)
         {
-            _emailSettings = emailSettings;
+            _emailSettings = settings.EmailSettings;
+            _logger = logger;
         }
 
         public async Task<List<EmailMessage>> GetUnreadEmailsAsync(CancellationToken cancellationToken)
@@ -26,6 +29,7 @@ namespace TelegramGigaChatBot.Services
 
             foreach (var account in _emailSettings.Accounts)
             {
+                _logger.LogInformation("Checking for unread emails in account {EmailAddress}.", account.EmailAddress);
                 try
                 {
                     using var client = new ImapClient();
@@ -38,6 +42,8 @@ namespace TelegramGigaChatBot.Services
                     await inbox.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
 
                     var uids = await inbox.SearchAsync(SearchQuery.NotSeen, cancellationToken);
+                    _logger.LogInformation("Found {Count} unread emails in account {EmailAddress}.", uids.Count, account.EmailAddress);
+
                     foreach (var uid in uids)
                     {
                         var message = await inbox.GetMessageAsync(uid, cancellationToken);
@@ -55,7 +61,7 @@ namespace TelegramGigaChatBot.Services
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Failed to read emails for {account.EmailAddress}: {ex.Message}");
+                    _logger.LogError(ex, "Failed to read emails for {EmailAddress}.", account.EmailAddress);
                     // Continue to the next account
                 }
             }
