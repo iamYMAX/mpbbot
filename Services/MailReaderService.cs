@@ -49,6 +49,7 @@ namespace TelegramGigaChatBot.Services
                         var message = await inbox.GetMessageAsync(uid, cancellationToken);
                         allUnreadEmails.Add(new EmailMessage
                         {
+                            MessageId = message.MessageId,
                             From = message.From.ToString(),
                             Subject = message.Subject,
                             Body = message.TextBody ?? string.Empty,
