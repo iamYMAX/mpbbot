@@ -21,20 +21,26 @@ public class UpdateHandler : IUpdateHandler
     private readonly MailReplyService _mailReplyService;
     private readonly EmailCacheService _emailCacheService;
     private readonly ILogger<UpdateHandler> _logger;
+    private readonly GigaChatService _gigaChatService;
 
     public UpdateHandler(
         YandexSttService yandexSttService,
         MailReplyService mailReplyService,
         EmailCacheService emailCacheService,
         ILogger<UpdateHandler> logger,
-        UserActionStateService userActionStateService)
+        UserActionStateService userActionStateService,
+        GigaChatService gigaChatService,
+        UserEmailAccountService userEmailAccountService)
     {
         _yandexSttService = yandexSttService;
         _mailReplyService = mailReplyService;
         _emailCacheService = emailCacheService;
         _logger = logger;
         _userActionStateService = userActionStateService;
+        _gigaChatService = gigaChatService;
+        _userEmailAccountService = userEmailAccountService;
     }
+    private readonly UserEmailAccountService _userEmailAccountService;
     private readonly UserActionStateService _userActionStateService;
     private const string DecisionCallback = "decision";
     private const string CancelCallback = "cancel";
@@ -68,6 +74,7 @@ public class UpdateHandler : IUpdateHandler
     private const string DiscardReplyCallback = "discard_reply";
     
     private readonly ConcurrentDictionary<long, string> _userReplyDrafts = new();
+    private readonly ConcurrentDictionary<long, EmailAccount> _userEmailRegistrationState = new();
 
     public Task HandleUpdateAsync(ITelegramBotClient botClient, Update update, CancellationToken cancellationToken)
     {
@@ -98,6 +105,80 @@ public class UpdateHandler : IUpdateHandler
         var userId = message.From.Id.ToString();
         
         var userState = _userActionStateService.GetState(message.From.Id);
+
+        switch (userState.CurrentAction)
+        {
+            case UserAction.WaitingForEmailAddress:
+                _userEmailRegistrationState[message.From.Id] = new EmailAccount { EmailAddress = messageText };
+                _userActionStateService.SetState(message.From.Id, UserAction.WaitingForEmailPassword);
+                await botClient.SendMessage(chatId: chatId, text: "Введите пароль приложения:", cancellationToken: cancellationToken);
+                return;
+            case UserAction.WaitingForEmailPassword:
+                _userEmailRegistrationState[message.From.Id].Password = messageText;
+                _userActionStateService.SetState(message.From.Id, UserAction.WaitingForImapHost);
+                await botClient.SendMessage(chatId: chatId, text: "Введите IMAP хост:", cancellationToken: cancellationToken);
+                return;
+            case UserAction.WaitingForImapHost:
+                _userEmailRegistrationState[message.From.Id].ImapHost = messageText;
+                _userActionStateService.SetState(message.From.Id, UserAction.WaitingForImapPort);
+                await botClient.SendMessage(chatId: chatId, text: "Введите IMAP порт:", cancellationToken: cancellationToken);
+                return;
+            case UserAction.WaitingForImapPort:
+                if (int.TryParse(messageText, out var imapPort))
+                {
+                    _userEmailRegistrationState[message.From.Id].ImapPort = imapPort;
+                    _userActionStateService.SetState(message.From.Id, UserAction.WaitingForSmtpHost);
+                    await botClient.SendMessage(chatId: chatId, text: "Введите SMTP хост:", cancellationToken: cancellationToken);
+                }
+                else
+                {
+                    await botClient.SendMessage(chatId: chatId, text: "Неверный порт. Попробуйте еще раз.", cancellationToken: cancellationToken);
+                }
+                return;
+            case UserAction.WaitingForSmtpHost:
+                _userEmailRegistrationState[message.From.Id].SmtpHost = messageText;
+                _userActionStateService.SetState(message.From.Id, UserAction.WaitingForSmtpPort);
+                await botClient.SendMessage(chatId: chatId, text: "Введите SMTP порт:", cancellationToken: cancellationToken);
+                return;
+            case UserAction.WaitingForSmtpHost:
+                _userEmailRegistrationState[message.From.Id].SmtpHost = messageText;
+                _userActionStateService.SetState(message.From.Id, UserAction.WaitingForSmtpPort);
+                await botClient.SendMessage(chatId: chatId, text: "Введите SMTP порт:", cancellationToken: cancellationToken);
+                return;
+            case UserAction.WaitingForSmtpPort:
+                if (int.TryParse(messageText, out var smtpPort))
+                {
+                    _userEmailRegistrationState[message.From.Id].SmtpPort = smtpPort;
+                    var account = _userEmailRegistrationState[message.From.Id];
+                    // You might want to ask for SSL/TLS settings as well
+                    account.ImapUseSsl = true;
+                    account.SmtpUseSsl = true;
+                    account.Login = account.EmailAddress;
+                    _userEmailAccountService.AddAccount(message.From.Id, account);
+                    _userEmailRegistrationState.TryRemove(message.From.Id, out _);
+                    _userActionStateService.ClearState(message.From.Id);
+                    await botClient.SendMessage(chatId: chatId, text: "Email аккаунт успешно добавлен.", cancellationToken: cancellationToken);
+                }
+                else
+                {
+                    await botClient.SendMessage(chatId: chatId, text: "Неверный порт. Попробуйте еще раз.", cancellationToken: cancellationToken);
+                }
+                return;
+        }
+
+        if (userState.CurrentAction == UserAction.EditingEmailReply)
+        {
+            var messageId = userState.Data;
+                account.ImapUseSsl = true;
+                account.SmtpUseSsl = true;
+                account.Login = account.EmailAddress;
+                _userEmailAccountService.AddAccount(message.From.Id, account);
+                _userEmailRegistrationState.TryRemove(message.From.Id, out _);
+                _userActionStateService.ClearState(message.From.Id);
+                await botClient.SendMessage(chatId: chatId, text: "Email аккаунт успешно добавлен.", cancellationToken: cancellationToken);
+                return;
+        }
+
         if (userState.CurrentAction == UserAction.EditingEmailReply)
         {
             var messageId = userState.Data;
@@ -116,6 +197,21 @@ public class UpdateHandler : IUpdateHandler
         }
 
         _logger.LogInformation("Received a '{messageText}' message in chat {chatId} from user {userId}.", messageText, chatId, userId);
+
+        if (messageText.StartsWith("/add_email"))
+        {
+            _userActionStateService.SetState(message.From.Id, UserAction.WaitingForEmailAddress);
+            await botClient.SendMessage(chatId: chatId, text: "Введите ваш email адрес:", cancellationToken: cancellationToken);
+            return;
+        }
+
+        if (messageText.StartsWith("/cancel"))
+        {
+            _userActionStateService.ClearState(message.From.Id);
+            _userEmailRegistrationState.TryRemove(message.From.Id, out _);
+            await botClient.SendMessage(chatId: chatId, text: "Действие отменено.", cancellationToken: cancellationToken);
+            return;
+        }
 
         if (messageText.StartsWith("/start"))
         {
@@ -273,7 +369,7 @@ public class UpdateHandler : IUpdateHandler
             }
             return;
         }
-        
+
         if (callbackData.StartsWith(SendReplyCallback))
         {
             var messageId = callbackData.Split('_')[1];
@@ -339,7 +435,7 @@ public class UpdateHandler : IUpdateHandler
 
                 await botClient.SendChatAction(chatId: chatId, action: ChatAction.Typing, cancellationToken: cancellationToken);
 
-                var response = await GigaChatService.GetDecisionAsync(lastMessage, history, mode, cancellationToken);
+                var response = await _gigaChatService.GetDecisionAsync(lastMessage, history, mode, cancellationToken);
 
                 MemoryService.SetLastSituation(userId, lastMessage);
                 MemoryService.SetLastGigaChatResponse(userId, response);
@@ -385,7 +481,7 @@ public class UpdateHandler : IUpdateHandler
                 var history = MemoryService.GetHistory(userId);
                 var mode = MemoryService.GetMode(userId);
 
-                var deepAnalysis = await GigaChatService.GetDeepAnalysisAsync(lastResponse, lastSituation, history, mode, cancellationToken);
+                var deepAnalysis = await _gigaChatService.GetDeepAnalysisAsync(lastResponse, lastSituation, history, mode, cancellationToken);
 
                 MemoryService.SetLastGigaChatResponse(userId, deepAnalysis);
 
@@ -545,7 +641,7 @@ public class UpdateHandler : IUpdateHandler
 
         var history = MemoryService.GetHistory(userId);
         var mode = MemoryService.GetMode(userId);
-        var response = await GigaChatService.GetDecisionAsync(text, history, mode, cancellationToken);
+        var response = await _gigaChatService.GetDecisionAsync(text, history, mode, cancellationToken);
 
         MemoryService.SetLastSituation(userId, text);
         MemoryService.SetLastGigaChatResponse(userId, response);

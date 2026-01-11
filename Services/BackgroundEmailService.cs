@@ -12,18 +12,21 @@ public class BackgroundEmailService : IHostedService, IDisposable
     private readonly MailReaderService _mailReaderService;
     private readonly MailAnalyzerService _mailAnalyzerService;
     private readonly EmailCacheService _emailCacheService;
+    private readonly UserEmailAccountService _userEmailAccountService;
     private Timer _timer;
 
     public BackgroundEmailService(
         ILogger<BackgroundEmailService> logger,
         MailReaderService mailReaderService,
         MailAnalyzerService mailAnalyzerService,
-        EmailCacheService emailCacheService)
+        EmailCacheService emailCacheService,
+        UserEmailAccountService userEmailAccountService)
     {
         _logger = logger;
         _mailReaderService = mailReaderService;
         _mailAnalyzerService = mailAnalyzerService;
         _emailCacheService = emailCacheService;
+        _userEmailAccountService = userEmailAccountService;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -38,12 +41,18 @@ public class BackgroundEmailService : IHostedService, IDisposable
         _logger.LogInformation("Background Email Service is working.");
         try
         {
-            var unreadEmails = await _mailReaderService.GetUnreadEmailsAsync(CancellationToken.None);
-            foreach (var email in unreadEmails)
+            // This is a simplistic approach. In a real application, you'd want to manage users more dynamically.
+            var allUserIds = _userEmailAccountService.GetAllUsers();
+
+            foreach (var userId in allUserIds)
             {
-                var analyzedEmail = await _mailAnalyzerService.AnalyzeEmailAsync(email, CancellationToken.None);
-                _emailCacheService.AddEmail(analyzedEmail);
-                _logger.LogInformation($"New email from {email.From} with subject '{email.Subject}' was received and analyzed.");
+                var unreadEmails = await _mailReaderService.GetUnreadEmailsAsync(userId, CancellationToken.None);
+                foreach (var email in unreadEmails)
+                {
+                    var analyzedEmail = await _mailAnalyzerService.AnalyzeEmailAsync(email, CancellationToken.None);
+                    _emailCacheService.AddEmail(analyzedEmail);
+                    _logger.LogInformation($"New email for user {userId} from {email.From} with subject '{email.Subject}' was received and analyzed.");
+                }
             }
         }
         catch (Exception ex)

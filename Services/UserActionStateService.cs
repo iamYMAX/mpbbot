@@ -7,7 +7,13 @@ public enum UserAction
     None,
     DictatingEmailReply,
     EditingEmailReply,
-    EnteringCustomReplyStyle
+    EnteringCustomReplyStyle,
+    WaitingForEmailAddress,
+    WaitingForEmailPassword,
+    WaitingForImapHost,
+    WaitingForImapPort,
+    WaitingForSmtpHost,
+    WaitingForSmtpPort
 }
 
 public class UserActionState

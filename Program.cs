@@ -19,10 +19,6 @@ public static class Program
     {
         var host = CreateHostBuilder(args).Build();
         
-        // Initialize GigaChat service
-        var gigaChatSettings = host.Services.GetRequiredService<AppSettings>().GigaChat;
-        GigaChatService.Initialize(gigaChatSettings);
-
         await host.RunAsync();
     }
 
@@ -57,12 +53,15 @@ public static class Program
                     return new TelegramBotClient(settings.Telegram.BotToken);
                 });
 
-                services.AddSingleton<YandexSttService>();
+                services.AddSingleton<GigaChatService>();
+                services.AddSingleton<YandexSttService>(provider =>
+                    new YandexSttService(provider.GetRequiredService<AppSettings>(), provider.GetRequiredService<ILogger<YandexSttService>>()));
                 services.AddSingleton<MailReaderService>(provider =>
-                    new MailReaderService(provider.GetRequiredService<AppSettings>(), provider.GetRequiredService<ILogger<MailReaderService>>()));
-                services.AddSingleton<MailAnalyzerService>();
+                    new MailReaderService(provider.GetRequiredService<UserEmailAccountService>(), provider.GetRequiredService<ILogger<MailReaderService>>()));
+                services.AddSingleton<MailAnalyzerService>(provider =>
+                    new MailAnalyzerService(provider.GetRequiredService<GigaChatService>(), provider.GetRequiredService<ILogger<MailAnalyzerService>>()));
                 services.AddSingleton<MailReplyService>(provider =>
-                    new MailReplyService(provider.GetRequiredService<AppSettings>(), provider.GetRequiredService<ILogger<MailReplyService>>()));
+                    new MailReplyService(provider.GetRequiredService<AppSettings>(), provider.GetRequiredService<ILogger<MailReplyService>>(), provider.GetRequiredService<GigaChatService>()));
                 services.AddSingleton<EmailCacheService>();
                 services.AddSingleton<IUpdateHandler, UpdateHandler>(provider =>
                     new UpdateHandler(
@@ -70,11 +69,19 @@ public static class Program
                         provider.GetRequiredService<MailReplyService>(),
                         provider.GetRequiredService<EmailCacheService>(),
                         provider.GetRequiredService<ILogger<UpdateHandler>>(),
-                        provider.GetRequiredService<UserActionStateService>()));
+                        provider.GetRequiredService<UserActionStateService>(),
+                        provider.GetRequiredService<GigaChatService>()));
 
                 services.AddSingleton<UserActionStateService>();
+                services.AddSingleton<UserEmailAccountService>();
 
-                services.AddHostedService<BackgroundEmailService>();
+                services.AddHostedService<BackgroundEmailService>(provider =>
+                    new BackgroundEmailService(
+                        provider.GetRequiredService<ILogger<BackgroundEmailService>>(),
+                        provider.GetRequiredService<MailReaderService>(),
+                        provider.GetRequiredService<MailAnalyzerService>(),
+                        provider.GetRequiredService<EmailCacheService>(),
+                        provider.GetRequiredService<UserEmailAccountService>()));
                 services.AddHostedService<BotInitializationService>();
 
                 services.AddLogging();

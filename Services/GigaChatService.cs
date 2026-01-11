@@ -7,32 +7,33 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using TelegramGigaChatBot.Configuration;
 using TelegramGigaChatBot.Models;
 
 namespace TelegramGigaChatBot.Services;
 
-public static class GigaChatService
+public class GigaChatService
 {
-    private static readonly HttpClient HttpClient = new();
-    private static GigaChatSettings? _settings;
-    private static string? _cachedToken;
-    private static DateTime _tokenExpiry = DateTime.UtcNow;
+    private readonly HttpClient _httpClient = new();
+    private readonly GigaChatSettings _settings;
+    private readonly ILogger<GigaChatService> _logger;
+    private string _cachedToken;
+    private DateTime _tokenExpiry = DateTime.UtcNow;
 
-    public static void Initialize(GigaChatSettings settings)
+    public GigaChatService(AppSettings settings, ILogger<GigaChatService> logger)
     {
-        _settings = settings;
+        _settings = settings.GigaChat;
+        _logger = logger;
     }
 
-    private static async Task<string?> GetAuthTokenAsync(CancellationToken cancellationToken)
+    private async Task<string> GetAuthTokenAsync(CancellationToken cancellationToken)
     {
         if (_cachedToken != null && DateTime.UtcNow < _tokenExpiry)
         {
             return _cachedToken;
         }
         
-        if (_settings == null) return null;
-
         var request = new HttpRequestMessage(HttpMethod.Post, "https://ngw.devices.sberbank.ru:9443/api/v2/oauth");
 
         var credentials = $"{_settings.ClientId}:{_settings.ClientSecret}";
@@ -47,36 +48,30 @@ public static class GigaChatService
 
         try
         {
-            var response = await HttpClient.SendAsync(request, cancellationToken);
+            var response = await _httpClient.SendAsync(request, cancellationToken);
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
-                Console.WriteLine($"GigaChat Auth Error: {response.StatusCode} | {responseBody}");
+                _logger.LogError("GigaChat Auth Error: {StatusCode} | {ResponseBody}", response.StatusCode, responseBody);
                 return null;
             }
 
             var authResponse = JsonSerializer.Deserialize<GigaAuthResponse>(responseBody);
             _cachedToken = authResponse?.AccessToken;
-            // GigaChat returns expiry in milliseconds since epoch, let's use it with a small buffer.
             _tokenExpiry = DateTime.UnixEpoch.AddMilliseconds(authResponse?.ExpiresAt ?? 0).AddSeconds(-60);
 
             return _cachedToken;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"GigaChat Auth Critical Error: {ex.Message}");
+            _logger.LogCritical(ex, "GigaChat Auth Critical Error");
             return null;
         }
     }
 
-    public static async Task<string> GetDecisionAsync(string lastMessage, List<string> history, ThinkingMode mode, CancellationToken cancellationToken)
+    public async Task<string> GetDecisionAsync(string lastMessage, List<string> history, ThinkingMode mode, CancellationToken cancellationToken)
     {
-        if (_settings == null)
-        {
-            return "Ошибка: GigaChat сервис не инициализирован.";
-        }
-
         var token = await GetAuthTokenAsync(cancellationToken);
         if (string.IsNullOrEmpty(token))
         {
@@ -108,18 +103,20 @@ public static class GigaChatService
 
         try
         {
-            var response = await HttpClient.SendAsync(request, cancellationToken);
+            var response = await _httpClient.SendAsync(request, cancellationToken);
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
-                return $"Ошибка API GigaChat: {response.StatusCode} | {responseBody}";
+                _logger.LogError("GigaChat API Error: {StatusCode} | {ResponseBody}", response.StatusCode, responseBody);
+                return $"Ошибка API GigaChat: {response.StatusCode}";
             }
             
             var gigaResponse = JsonSerializer.Deserialize<GigaChatResponse>(responseBody);
 
             if (gigaResponse?.Error?.Message != null)
             {
+                 _logger.LogError("GigaChat API Error: {ErrorMessage}", gigaResponse.Error.Message);
                  return $"Ошибка от API GigaChat: {gigaResponse.Error.Message}";
             }
 
@@ -128,21 +125,18 @@ public static class GigaChatService
                 return gigaResponse.Choices[0].Message?.Content?.Trim() ?? "Ответ не содержит текста.";
             }
             
+            _logger.LogWarning("GigaChat returned an empty or invalid response.");
             return "Ошибка: GigaChat вернул пустой или некорректный ответ.";
         }
         catch (Exception ex)
         {
+            _logger.LogCritical(ex, "Critical error during GigaChat request");
             return $"Критическая ошибка при запросе к GigaChat: {ex.Message}";
         }
     }
 
-    public static async Task<string> GetDeepAnalysisAsync(string lastAnswer, string lastSituation, List<string> history, ThinkingMode mode, CancellationToken cancellationToken)
+    public async Task<string> GetDeepAnalysisAsync(string lastAnswer, string lastSituation, List<string> history, ThinkingMode mode, CancellationToken cancellationToken)
     {
-        if (_settings == null)
-        {
-            return "Ошибка: GigaChat сервис не инициализирован.";
-        }
-
         var token = await GetAuthTokenAsync(cancellationToken);
         if (string.IsNullOrEmpty(token))
         {
@@ -174,19 +168,21 @@ public static class GigaChatService
 
         try
         {
-            var response = await HttpClient.SendAsync(request, cancellationToken);
+            var response = await _httpClient.SendAsync(request, cancellationToken);
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
-                return $"Ошибка API GigaChat: {response.StatusCode} | {responseBody}";
+                _logger.LogError("GigaChat API Error: {StatusCode} | {ResponseBody}", response.StatusCode, responseBody);
+                return $"Ошибка API GigaChat: {response.StatusCode}";
             }
             
             var gigaResponse = JsonSerializer.Deserialize<GigaChatResponse>(responseBody);
 
             if (gigaResponse?.Error?.Message != null)
             {
-                 return $"Ошибка от API GigaChat: {gigaResponse.Error.Message}";
+                _logger.LogError("GigaChat API Error: {ErrorMessage}", gigaResponse.Error.Message);
+                return $"Ошибка от API GigaChat: {gigaResponse.Error.Message}";
             }
 
             if (gigaResponse?.Choices != null && gigaResponse.Choices.Any())
@@ -194,21 +190,18 @@ public static class GigaChatService
                 return gigaResponse.Choices[0].Message?.Content?.Trim() ?? "Ответ не содержит текста.";
             }
             
+            _logger.LogWarning("GigaChat returned an empty or invalid response.");
             return "Ошибка: GigaChat вернул пустой или некорректный ответ.";
         }
         catch (Exception ex)
         {
+            _logger.LogCritical(ex, "Critical error during GigaChat request");
             return $"Критическая ошибка при запросе к GigaChat: {ex.Message}";
         }
     }
     
-    public static async Task<string> GetRawGigaChatResponse(string prompt, CancellationToken cancellationToken)
+    public async Task<string> GetRawGigaChatResponse(string prompt, CancellationToken cancellationToken)
     {
-        if (_settings == null)
-        {
-            return "{\"error\":\"GigaChat service not initialized.\"}";
-        }
-
         var token = await GetAuthTokenAsync(cancellationToken);
         if (string.IsNullOrEmpty(token))
         {

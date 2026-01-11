@@ -10,6 +10,7 @@ public class EmailCacheService
 {
     private readonly string _cacheFilePath = "email_cache.json";
     private Dictionary<string, EmailAnalysisResult> _emailCache = new();
+    private readonly object _cacheLock = new object();
 
     public EmailCacheService()
     {
@@ -47,19 +48,25 @@ public class EmailCacheService
 
     private void SaveCache()
     {
-        var json = JsonSerializer.Serialize(_emailCache);
-        File.WriteAllText(_cacheFilePath, json);
+        lock (_cacheLock)
+        {
+            var json = JsonSerializer.Serialize(_emailCache);
+            File.WriteAllText(_cacheFilePath, json);
+        }
     }
 
     private void LoadCache()
     {
-        if (File.Exists(_cacheFilePath))
+        lock (_cacheLock)
         {
-            var json = File.ReadAllText(_cacheFilePath);
-            var cache = JsonSerializer.Deserialize<Dictionary<string, EmailAnalysisResult>>(json);
-            if (cache != null)
+            if (File.Exists(_cacheFilePath))
             {
-                _emailCache = cache;
+                var json = File.ReadAllText(_cacheFilePath);
+                var cache = JsonSerializer.Deserialize<Dictionary<string, EmailAnalysisResult>>(json);
+                if (cache != null)
+                {
+                    _emailCache = cache;
+                }
             }
         }
     }

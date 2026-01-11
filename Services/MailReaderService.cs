@@ -14,20 +14,21 @@ namespace TelegramGigaChatBot.Services
 {
     public class MailReaderService
     {
-        private readonly EmailSettings _emailSettings;
+        private readonly UserEmailAccountService _userEmailAccountService;
         private readonly ILogger<MailReaderService> _logger;
 
-        public MailReaderService(AppSettings settings, ILogger<MailReaderService> logger)
+        public MailReaderService(UserEmailAccountService userEmailAccountService, ILogger<MailReaderService> logger)
         {
-            _emailSettings = settings.EmailSettings;
+            _userEmailAccountService = userEmailAccountService;
             _logger = logger;
         }
 
-        public async Task<List<EmailMessage>> GetUnreadEmailsAsync(CancellationToken cancellationToken)
+        public async Task<List<EmailMessage>> GetUnreadEmailsAsync(long userId, CancellationToken cancellationToken)
         {
             var allUnreadEmails = new List<EmailMessage>();
+            var accounts = _userEmailAccountService.GetAccounts(userId);
 
-            foreach (var account in _emailSettings.Accounts)
+            foreach (var account in accounts)
             {
                 _logger.LogInformation("Checking for unread emails in account {EmailAddress}.", account.EmailAddress);
                 try
@@ -35,8 +36,7 @@ namespace TelegramGigaChatBot.Services
                     using var client = new ImapClient();
                     await client.ConnectAsync(account.ImapHost, account.ImapPort, account.ImapUseSsl, cancellationToken);
                     
-                    var password = SecurityService.Decrypt(account.Password, _emailSettings.EncryptionKey);
-                    await client.AuthenticateAsync(account.Login, password, cancellationToken);
+                    await client.AuthenticateAsync(account.Login, account.Password, cancellationToken);
 
                     var inbox = client.Inbox;
                     await inbox.OpenAsync(FolderAccess.ReadOnly, cancellationToken);

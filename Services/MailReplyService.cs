@@ -13,11 +13,13 @@ namespace TelegramGigaChatBot.Services
     {
         private readonly EmailSettings _emailSettings;
         private readonly ILogger<MailReplyService> _logger;
+        private readonly GigaChatService _gigaChatService;
 
-        public MailReplyService(AppSettings settings, ILogger<MailReplyService> logger)
+        public MailReplyService(AppSettings settings, ILogger<MailReplyService> logger, GigaChatService gigaChatService)
         {
             _emailSettings = settings.EmailSettings;
             _logger = logger;
+            _gigaChatService = gigaChatService;
         }
 
         public async Task<string> GenerateReplyDraftAsync(EmailAnalysisResult email, ReplyStyle style, CancellationToken cancellationToken, string customStyle = "")
@@ -38,7 +40,7 @@ namespace TelegramGigaChatBot.Services
 Напиши черновик ответа. Ответ должен быть вежливым, по существу и учитывать заданный стиль.
 ";
 
-            var draft = await GigaChatService.GetRawGigaChatResponse(prompt, cancellationToken);
+            var draft = await _gigaChatService.GetRawGigaChatResponse(prompt, cancellationToken);
             // Basic cleanup of the draft
             return draft.Trim().Replace("{\"error\":\"GigaChat service not initialized.\"}", "Не удалось сгенерировать ответ.");
         }

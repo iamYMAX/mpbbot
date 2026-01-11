@@ -2,12 +2,22 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using TelegramGigaChatBot.Models;
 
 namespace TelegramGigaChatBot.Services
 {
     public class MailAnalyzerService
     {
+        private readonly GigaChatService _gigaChatService;
+        private readonly ILogger<MailAnalyzerService> _logger;
+
+        public MailAnalyzerService(GigaChatService gigaChatService, ILogger<MailAnalyzerService> logger)
+        {
+            _gigaChatService = gigaChatService;
+            _logger = logger;
+        }
+
         public async Task<EmailAnalysisResult> AnalyzeEmailAsync(EmailMessage email, CancellationToken cancellationToken)
         {
             var prompt = $@"
@@ -31,7 +41,7 @@ namespace TelegramGigaChatBot.Services
 {email.Body}
 ";
 
-            var rawResponse = await GigaChatService.GetRawGigaChatResponse(prompt, cancellationToken);
+            var rawResponse = await _gigaChatService.GetRawGigaChatResponse(prompt, cancellationToken);
 
             try
             {
@@ -44,7 +54,7 @@ namespace TelegramGigaChatBot.Services
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to deserialize GigaChat response for email analysis: {ex.Message}");
+                _logger.LogError(ex, "Failed to deserialize GigaChat response for email analysis.");
             }
             
             return new EmailAnalysisResult
