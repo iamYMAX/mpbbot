@@ -109,6 +109,11 @@ namespace TelegramGigaChatBot.Services
 
         public async Task<(bool success, string text)> RecognizeSpeechAsync(Stream audioStream, CancellationToken cancellationToken)
         {
+        if (_settings.UseMocks)
+        {
+            return (true, "Это мок-ответ от Yandex STT.");
+        }
+
             try
             {
                 await EnsureValidTokenAsync(cancellationToken);

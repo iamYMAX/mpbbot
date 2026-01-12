@@ -81,6 +81,11 @@ public class GigaChatService
 
     public async Task<string> GetDecisionAsync(string lastMessage, List<string> history, ThinkingMode mode, CancellationToken cancellationToken)
     {
+        if (_settings.UseMocks)
+        {
+            return "Это мок-ответ от GigaChat. Я помогу вам принять решение.";
+        }
+
         var token = await GetAuthTokenAsync(cancellationToken);
         if (string.IsNullOrEmpty(token))
         {
@@ -146,6 +151,11 @@ public class GigaChatService
 
     public async Task<string> GetDeepAnalysisAsync(string lastAnswer, string lastSituation, List<string> history, ThinkingMode mode, CancellationToken cancellationToken)
     {
+        if (_settings.UseMocks)
+        {
+            return "Это мок-ответ для глубокого анализа от GigaChat.";
+        }
+
         var token = await GetAuthTokenAsync(cancellationToken);
         if (string.IsNullOrEmpty(token))
         {
@@ -211,6 +221,11 @@ public class GigaChatService
     
     public async Task<string> GetRawGigaChatResponse(string prompt, CancellationToken cancellationToken)
     {
+        if (_settings.UseMocks)
+        {
+            return "{\"summary\":\"Это мок-ответ от GigaChat.\",\"priority\":\"Medium\"}";
+        }
+
         var token = await GetAuthTokenAsync(cancellationToken);
         if (string.IsNullOrEmpty(token))
         {
