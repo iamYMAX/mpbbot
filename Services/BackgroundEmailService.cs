@@ -1,12 +1,11 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace TelegramGigaChatBot.Services;
 
-public class BackgroundEmailService : IHostedService, IDisposable
+public class BackgroundEmailService : IDisposable
 {
     private readonly ILogger<BackgroundEmailService> _logger;
     private readonly MailReaderService _mailReaderService;
@@ -29,11 +28,10 @@ public class BackgroundEmailService : IHostedService, IDisposable
         _userEmailAccountService = userEmailAccountService;
     }
 
-    public Task StartAsync(CancellationToken cancellationToken)
+    public void Start()
     {
         _logger.LogInformation("Background Email Service is starting.");
         _timer = new Timer(DoWork, null, TimeSpan.Zero, TimeSpan.FromMinutes(1));
-        return Task.CompletedTask;
     }
 
     private async void DoWork(object state)
