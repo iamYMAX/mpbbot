@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Telegram.Bot;
 using Telegram.Bot.Polling;
 using Telegram.Bot.Types.Enums;
@@ -16,43 +17,33 @@ public static class Program
 {
     public static async Task Main(string[] args)
     {
-        Console.WriteLine("Application starting...");
-        var basePath = AppDomain.CurrentDomain.BaseDirectory;
-        var appSettingsPath = Path.Combine(basePath, "appsettings.json");
-
-        if (!System.IO.File.Exists(appSettingsPath))
-        {
-            Console.WriteLine("CRITICAL ERROR: appsettings.json not found!");
-            return;
-        }
-
         var configuration = new ConfigurationBuilder()
-            .SetBasePath(basePath)
+            .SetBasePath(AppDomain.CurrentDomain.BaseDirectory)
             .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
             .Build();
 
         var settings = configuration.Get<AppSettings>();
 
-        if (settings == null)
+        var loggerFactory = LoggerFactory.Create(builder =>
         {
-            Console.WriteLine("CRITICAL ERROR: Could not read settings from appsettings.json.");
-            return;
-        }
-        
-        if (string.IsNullOrEmpty(settings.Telegram.BotToken) || settings.Telegram.BotToken == "<TOKEN>")
-        {
-            Console.WriteLine("CRITICAL ERROR: Telegram BotToken is invalid or not configured.");
-            return;
-        }
-
-        // Initialize services
-        GigaChatService.Initialize(settings.GigaChat);
-        var yandexSttService = new YandexSttService(settings.YandexSpeechKit);
-        var mailReaderService = new MailReaderService(settings.EmailSettings);
-        var mailAnalyzerService = new MailAnalyzerService();
-        var mailReplyService = new MailReplyService(settings.EmailSettings);
+            builder.AddConsole();
+        });
 
         var botClient = new TelegramBotClient(settings.Telegram.BotToken);
+
+        var gigaChatService = new GigaChatService(settings, loggerFactory.CreateLogger<GigaChatService>());
+        var yandexSttService = new YandexSttService(settings, loggerFactory.CreateLogger<YandexSttService>());
+        var userEmailAccountService = new UserEmailAccountService(settings);
+        var mailReaderService = new MailReaderService(userEmailAccountService, loggerFactory.CreateLogger<MailReaderService>());
+        var mailAnalyzerService = new MailAnalyzerService(gigaChatService, loggerFactory.CreateLogger<MailAnalyzerService>());
+        var mailReplyService = new MailReplyService(settings, loggerFactory.CreateLogger<MailReplyService>(), gigaChatService);
+        var emailCacheService = new EmailCacheService();
+        var userActionStateService = new UserActionStateService();
+
+        var updateHandler = new UpdateHandler(yandexSttService, mailReplyService, emailCacheService, loggerFactory.CreateLogger<UpdateHandler>(), userActionStateService, gigaChatService, userEmailAccountService);
+
+        var backgroundEmailService = new BackgroundEmailService(loggerFactory.CreateLogger<BackgroundEmailService>(), mailReaderService, mailAnalyzerService, emailCacheService, userEmailAccountService);
+        backgroundEmailService.Start();
 
         using var cts = new CancellationTokenSource();
 
@@ -61,15 +52,13 @@ public static class Program
             AllowedUpdates = new[] { UpdateType.Message, UpdateType.CallbackQuery }
         };
 
-        var updateHandler = new UpdateHandler(yandexSttService, mailReaderService, mailAnalyzerService, mailReplyService);
-
         botClient.StartReceiving(
             updateHandler: updateHandler,
             receiverOptions: receiverOptions,
             cancellationToken: cts.Token
         );
 
-        var me = await botClient.GetMe(cancellationToken: cts.Token);
+        var me = await botClient.GetMeAsync(cancellationToken: cts.Token);
         Console.WriteLine($"Start listening for @{me.Username}");
         await Task.Delay(-1, cts.Token);
     }

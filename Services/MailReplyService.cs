@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using MailKit.Net.Smtp;
+using Microsoft.Extensions.Logging;
 using MimeKit;
 using TelegramGigaChatBot.Configuration;
 using TelegramGigaChatBot.Models;
@@ -11,15 +12,19 @@ namespace TelegramGigaChatBot.Services
     public class MailReplyService
     {
         private readonly EmailSettings _emailSettings;
+        private readonly ILogger<MailReplyService> _logger;
+        private readonly GigaChatService _gigaChatService;
 
-        public MailReplyService(EmailSettings emailSettings)
+        public MailReplyService(AppSettings settings, ILogger<MailReplyService> logger, GigaChatService gigaChatService)
         {
-            _emailSettings = emailSettings;
+            _emailSettings = settings.EmailSettings;
+            _logger = logger;
+            _gigaChatService = gigaChatService;
         }
 
-        public async Task<string> GenerateReplyDraftAsync(AnalyzedEmail email, ThinkingMode mode, CancellationToken cancellationToken)
+        public async Task<string> GenerateReplyDraftAsync(EmailAnalysisResult email, ReplyStyle style, CancellationToken cancellationToken, string customStyle = "")
         {
-            var stylePrompt = ThinkingModeHelper.GetStylePrompt(mode);
+            var stylePrompt = ReplyStyleHelper.GetStylePrompt(style, customStyle);
             var prompt = $@"
 Ты — ИИ-ассистент, который помогает писать ответы на электронные письма.
 Стиль ответа: {stylePrompt}.
@@ -31,18 +36,18 @@ namespace TelegramGigaChatBot.Services
 
 АНАЛИЗ ПИСЬМА:
 {email.Summary}
-Требуется: {email.ActionRequired}
 
 Напиши черновик ответа. Ответ должен быть вежливым, по существу и учитывать заданный стиль.
 ";
 
-            var draft = await GigaChatService.GetRawGigaChatResponse(prompt, cancellationToken);
+            var draft = await _gigaChatService.GetRawGigaChatResponse(prompt, cancellationToken);
             // Basic cleanup of the draft
             return draft.Trim().Replace("{\"error\":\"GigaChat service not initialized.\"}", "Не удалось сгенерировать ответ.");
         }
 
         public async Task<bool> SendReplyAsync(EmailAccount account, string to, string subject, string body, CancellationToken cancellationToken)
         {
+            _logger.LogInformation("Attempting to send email from {EmailAddress} to {To}.", account.EmailAddress, to);
             try
             {
                 var message = new MimeMessage();
@@ -60,11 +65,12 @@ namespace TelegramGigaChatBot.Services
                 await client.SendAsync(message, cancellationToken);
                 await client.DisconnectAsync(true, cancellationToken);
                 
+                _logger.LogInformation("Successfully sent email from {EmailAddress} to {To}.", account.EmailAddress, to);
                 return true;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to send email from {account.EmailAddress}: {ex.Message}");
+                _logger.LogError(ex, "Failed to send email from {EmailAddress}.", account.EmailAddress);
                 return false;
             }
         }

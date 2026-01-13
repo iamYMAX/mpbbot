@@ -9,6 +9,7 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using System.IdentityModel.Tokens.Jwt;
+using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using TelegramGigaChatBot.Configuration;
 
@@ -17,14 +18,16 @@ namespace TelegramGigaChatBot.Services
     public class YandexSttService
     {
         private readonly YandexSettings _settings;
-        private static readonly HttpClient _httpClient = new HttpClient();
-        private static string? _iamToken;
-        private static DateTime _tokenExpiry;
-        private static readonly SemaphoreSlim _tokenSemaphore = new SemaphoreSlim(1, 1);
+        private readonly HttpClient _httpClient = new HttpClient();
+        private string _iamToken;
+        private DateTime _tokenExpiry;
+        private readonly SemaphoreSlim _tokenSemaphore = new SemaphoreSlim(1, 1);
+        private readonly ILogger<YandexSttService> _logger;
 
-        public YandexSttService(YandexSettings settings)
+        public YandexSttService(AppSettings settings, ILogger<YandexSttService> logger)
         {
-            _settings = settings ?? throw new ArgumentNullException(nameof(settings));
+            _settings = settings.YandexSpeechKit ?? throw new ArgumentNullException(nameof(settings.YandexSpeechKit));
+            _logger = logger;
             if (string.IsNullOrEmpty(_settings.FolderId) || string.IsNullOrEmpty(_settings.ServiceAccountKeyPath) || string.IsNullOrEmpty(_settings.IamTokenUrl) || string.IsNullOrEmpty(_settings.SttUrl))
             {
                 throw new InvalidOperationException("One or more YandexSpeechKit settings are not configured.");
@@ -48,7 +51,7 @@ namespace TelegramGigaChatBot.Services
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-                    Console.WriteLine($"Yandex IAM Token Error: {response.StatusCode}\n{errorBody}");
+                    _logger.LogError("Yandex IAM Token Error: {StatusCode}\n{ErrorBody}", response.StatusCode, errorBody);
                     throw new HttpRequestException("Could not retrieve Yandex IAM token. Check service account key and configuration.");
                 }
 
@@ -106,6 +109,11 @@ namespace TelegramGigaChatBot.Services
 
         public async Task<(bool success, string text)> RecognizeSpeechAsync(Stream audioStream, CancellationToken cancellationToken)
         {
+        if (_settings.UseMocks)
+        {
+            return (true, "Это мок-ответ от Yandex STT.");
+        }
+
             try
             {
                 await EnsureValidTokenAsync(cancellationToken);
@@ -122,7 +130,7 @@ namespace TelegramGigaChatBot.Services
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-                    Console.WriteLine($"Yandex STT API Error: {response.StatusCode}\n{errorBody}");
+                    _logger.LogError("Yandex STT API Error: {StatusCode}\n{ErrorBody}", response.StatusCode, errorBody);
                     return (false, "Сервис распознавания временно недоступен. Проверьте конфигурацию.");
                 }
 
@@ -139,7 +147,7 @@ namespace TelegramGigaChatBot.Services
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Yandex STT Error: {ex.Message}");
+                _logger.LogError(ex, "Yandex STT Error");
                 return (false, "Произошла внутренняя ошибка при распознавании речи.");
             }
         }
