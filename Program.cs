@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Telegram.Bot;
 using Telegram.Bot.Polling;
 using Telegram.Bot.Types.Enums;
@@ -16,13 +17,14 @@ public static class Program
 {
     public static async Task Main(string[] args)
     {
-        Console.WriteLine("Application starting...");
+        LoggingService.Initialize();
+        LoggingService.Logger?.LogInformation("Application starting...");
         var basePath = AppDomain.CurrentDomain.BaseDirectory;
         var appSettingsPath = Path.Combine(basePath, "appsettings.json");
 
         if (!System.IO.File.Exists(appSettingsPath))
         {
-            Console.WriteLine("CRITICAL ERROR: appsettings.json not found!");
+            LoggingService.Logger?.LogCritical("appsettings.json not found!");
             return;
         }
 
@@ -35,13 +37,13 @@ public static class Program
 
         if (settings == null)
         {
-            Console.WriteLine("CRITICAL ERROR: Could not read settings from appsettings.json.");
+            LoggingService.Logger?.LogCritical("Could not read settings from appsettings.json.");
             return;
         }
         
         if (string.IsNullOrEmpty(settings.Telegram.BotToken) || settings.Telegram.BotToken == "<TOKEN>")
         {
-            Console.WriteLine("CRITICAL ERROR: Telegram BotToken is invalid or not configured.");
+            LoggingService.Logger?.LogCritical("Telegram BotToken is invalid or not configured.");
             return;
         }
 
@@ -51,17 +53,29 @@ public static class Program
         var mailReaderService = new MailReaderService(settings.EmailSettings);
         var mailAnalyzerService = new MailAnalyzerService();
         var mailReplyService = new MailReplyService(settings.EmailSettings);
+        var emailCacheService = new EmailCacheService();
 
         var botClient = new TelegramBotClient(settings.Telegram.BotToken);
 
         using var cts = new CancellationTokenSource();
+
+        // Start background email checking
+        if (settings.Telegram.NotificationChatId != 0)
+        {
+            var backgroundEmailService = new BackgroundEmailService(botClient, mailReaderService, mailAnalyzerService, emailCacheService, settings.Telegram.NotificationChatId, settings.BackgroundService.CheckIntervalMinutes);
+            _ = backgroundEmailService.StartAsync(cts.Token);
+        }
+        else
+        {
+            Console.WriteLine("WARNING: Telegram.NotificationChatId is not set. Background email checking is disabled.");
+        }
 
         var receiverOptions = new ReceiverOptions
         {
             AllowedUpdates = new[] { UpdateType.Message, UpdateType.CallbackQuery }
         };
 
-        var updateHandler = new UpdateHandler(yandexSttService, mailReaderService, mailAnalyzerService, mailReplyService);
+        var updateHandler = new UpdateHandler(yandexSttService, mailReaderService, mailAnalyzerService, mailReplyService, emailCacheService);
 
         botClient.StartReceiving(
             updateHandler: updateHandler,

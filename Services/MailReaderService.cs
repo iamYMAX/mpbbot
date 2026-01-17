@@ -43,6 +43,7 @@ namespace TelegramGigaChatBot.Services
                         var message = await inbox.GetMessageAsync(uid, cancellationToken);
                         allUnreadEmails.Add(new EmailMessage
                         {
+                            MessageId = message.MessageId,
                             From = message.From.ToString(),
                             Subject = message.Subject,
                             Body = message.TextBody ?? string.Empty,
@@ -55,7 +56,7 @@ namespace TelegramGigaChatBot.Services
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Failed to read emails for {account.EmailAddress}: {ex.Message}");
+                    LoggingService.Logger?.LogError(ex, $"Failed to read emails for {account.EmailAddress}.");
                     // Continue to the next account
                 }
             }

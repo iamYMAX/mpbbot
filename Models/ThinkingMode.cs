@@ -7,6 +7,16 @@ public enum ThinkingMode
     Provocative
 }
 
+public enum ReplyStyle
+{
+    Formal,
+    Business,
+    Neutral,
+    Friendly,
+    Concise,
+    Custom
+}
+
 public static class ThinkingModeHelper
 {
     private static readonly Dictionary<string, ThinkingMode> ModeMap = new()
@@ -42,5 +52,23 @@ public static class ThinkingModeHelper
             ThinkingMode.Provocative => "Провокационно",
             _ => "Рационально"
         };
+    }
+}
+
+public static class ReplyStyleHelper
+{
+    private static readonly Dictionary<ReplyStyle, string> StylePrompts = new()
+    {
+        [ReplyStyle.Formal] = "Используй строгий, официальный язык. Обращение на 'Вы'.",
+        [ReplyStyle.Business] = "Деловой, но не слишком формальный. Сосредоточься на решении.",
+        [ReplyStyle.Neutral] = "Нейтральный, сдержанный тон. Без эмоций.",
+        [ReplyStyle.Friendly] = "Дружелюбный, позитивный тон. Можно использовать 'ты', если уместно.",
+        [ReplyStyle.Concise] = "Максимально кратко и по делу. Только суть.",
+        [ReplyStyle.Custom] = "Используй кастомный стиль, указанный пользователем."
+    };
+
+    public static string GetStylePrompt(ReplyStyle style)
+    {
+        return StylePrompts.GetValueOrDefault(style, StylePrompts[ReplyStyle.Neutral]);
     }
 }
